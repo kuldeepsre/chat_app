@@ -1,11 +1,16 @@
 import 'dart:io';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
-import 'package:video_player/video_player.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:video_player/video_player.dart';
+
+const String appId = 'YOUR_AGORA_APP_ID'; // Replace with your Agora App ID
+const String token = 'YOUR_AGORA_TOKEN'; // Replace with your Agora Token or null if not needed
+const String channelName = 'test_channel'; // Replace with your channel name
 
 class RoomChatScreen extends StatefulWidget {
   final String roomId;
@@ -22,14 +27,18 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   FlutterSoundPlayer? _player;
   bool isRecording = false;
   bool isPlaying = false;
-  String? _currentPlayingAudioUrl; // Track currently playing audio
-  String? _currentPlayingVideoUrl; // Track currently playing video
-  VideoPlayerController? _videoPlayerController;
+  int? _remoteUid;
+  bool _localUserJoined = false;
+  RtcEngine? _engine;
+  VideoPlayerController? _videoController;
+  bool isVideoPlaying = false;
+
   late CollectionReference messagesCollection;
 
   @override
   void initState() {
     super.initState();
+    _initializeAgora();
     _recorder = FlutterSoundRecorder();
     _player = FlutterSoundPlayer();
     _recorder!.openRecorder();
@@ -37,11 +46,57 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     messagesCollection = FirebaseFirestore.instance.collection('rooms/${widget.roomId}/messages');
   }
 
+  Future<void> _initializeAgora() async {
+    // Request the necessary permissions for video and audio
+    await [Permission.microphone, Permission.camera].request();
+
+    // Create the Agora engine
+    _engine = createAgoraRtcEngine();
+    await _engine!.initialize(RtcEngineContext(appId: appId));
+
+    // Set event handlers
+    _engine!.registerEventHandler(
+      RtcEngineEventHandler(
+        onJoinChannelSuccess: (RtcConnection connection, int elapsed) {
+          print('Local user joined: ${connection.localUid}');
+          setState(() {
+            _localUserJoined = true;
+          });
+        },
+        onUserJoined: (RtcConnection connection, int remoteUid, int elapsed) {
+          print('Remote user joined: $remoteUid');
+          setState(() {
+            _remoteUid = remoteUid;
+          });
+        },
+        onUserOffline: (RtcConnection connection, int remoteUid, UserOfflineReasonType reason) {
+          print('Remote user left: $remoteUid');
+          setState(() {
+            _remoteUid = null;
+          });
+        },
+      ),
+    );
+
+    // Enable video
+    await _engine!.enableVideo();
+
+    // Join the channel
+    await _engine!.joinChannel(
+      token: token,
+      channelId: channelName,
+      uid: 0,
+      options: ChannelMediaOptions(),
+    );
+  }
+
   @override
   void dispose() {
+    _engine!.leaveChannel();
+    _engine!.release();
     _recorder!.closeRecorder();
     _player!.closePlayer();
-    _videoPlayerController?.dispose(); // Dispose video controller
+    _videoController?.dispose();
     super.dispose();
   }
 
@@ -52,20 +107,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
         'content': content,
         'createdAt': Timestamp.now(),
       });
-      _messageController.clear();
-    }
-  }
-
-  Future<void> _pickVideo() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickVideo(source: ImageSource.gallery);
-
-    if (pickedFile != null) {
-      final storageRef = FirebaseStorage.instance.ref().child('room_videos/${DateTime.now().toString()}.mp4');
-      await storageRef.putFile(File(pickedFile.path));
-      String videoUrl = await storageRef.getDownloadURL();
-
-      _sendMessage('video', videoUrl);
+      _messageController.clear(); // Clear input field after sending
     }
   }
 
@@ -79,6 +121,19 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       String fileUrl = await storageRef.getDownloadURL();
 
       _sendMessage('image', fileUrl);
+    }
+  }
+
+  Future<void> _pickVideo() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickVideo(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      final storageRef = FirebaseStorage.instance.ref().child('room_videos/${DateTime.now().toString()}.mp4');
+      await storageRef.putFile(File(pickedFile.path));
+      String fileUrl = await storageRef.getDownloadURL();
+
+      _sendMessage('video', fileUrl);
     }
   }
 
@@ -106,44 +161,167 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
     }
   }
 
-  Future<void> _playAudio(String url) async {
-    if (_currentPlayingAudioUrl == url && isPlaying) {
-      await _player!.stopPlayer();
-      setState(() {
-        isPlaying = false;
-        _currentPlayingAudioUrl = null;
-      });
-    } else {
-      if (isPlaying) {
-        await _player!.stopPlayer();
-      }
-      await _player!.startPlayer(fromURI: url, codec: Codec.aacADTS);
-      setState(() {
-        isPlaying = true;
-        _currentPlayingAudioUrl = url;
-      });
-    }
+  void _joinVideoCall() async {
+    setState(() {
+      _localUserJoined = true;
+    });
+    await _initializeAgora();
   }
 
-  Future<void> _playVideo(String videoUrl) async {
-    if (_videoPlayerController != null) {
-      await _videoPlayerController!.pause();
-    }
+  void _leaveVideoCall() async {
+    await _engine!.leaveChannel();
+    setState(() {
+      _localUserJoined = false;
+      _remoteUid = null;
+    });
+  }
 
-    if (_currentPlayingVideoUrl == videoUrl && _videoPlayerController!.value.isPlaying) {
-      _videoPlayerController!.pause();
-      setState(() {
-        _currentPlayingVideoUrl = null;
-      });
-    } else {
-      _videoPlayerController = VideoPlayerController.network(videoUrl);
-      await _videoPlayerController!.initialize();
-      _videoPlayerController!.play();
-
-      setState(() {
-        _currentPlayingVideoUrl = videoUrl;
-      });
+  void _playVideo(String url) async {
+    if (_videoController != null) {
+      _videoController!.dispose();
     }
+    _videoController = VideoPlayerController.network(url)
+      ..initialize().then((_) {
+        setState(() {
+          isVideoPlaying = true;
+          _videoController!.play();
+        });
+      });
+  }
+
+  Widget _buildMessageBubble(DocumentSnapshot message) {
+    bool isImage = message['type'] == 'image';
+    bool isAudio = message['type'] == 'audio';
+    bool isVideo = message['type'] == 'video';
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: EdgeInsets.symmetric(vertical: 5),
+        padding: EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.blue[100],
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: isImage
+            ? Image.network(message['content'])
+            : isAudio
+            ? IconButton(
+          icon: Icon(Icons.play_circle_outline),
+          onPressed: () {
+            if (!isPlaying) {
+              _player!.startPlayer(fromURI: message['content']);
+              setState(() {
+                isPlaying = true;
+              });
+            } else {
+              _player!.stopPlayer();
+              setState(() {
+                isPlaying = false;
+              });
+            }
+          },
+        )
+            : isVideo
+            ? IconButton(
+          icon: Icon(Icons.play_circle_filled),
+          onPressed: () => _playVideo(message['content']),
+        )
+            : Text(message['content']),
+      ),
+    );
+  }
+
+  Widget _buildMessageInput() {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(Icons.attach_file),
+            onPressed: _pickAttachment,
+          ),
+          IconButton(
+            icon: Icon(Icons.videocam),
+            onPressed: _pickVideo,
+          ),
+          IconButton(
+            icon: isRecording ? Icon(Icons.stop) : Icon(Icons.mic),
+            onPressed: () {
+              if (isRecording) {
+                _stopRecording();
+              } else {
+                _startRecording();
+              }
+            },
+          ),
+          Expanded(
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                hintText: 'Type a message...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.send),
+            onPressed: () => _sendMessage('text', _messageController.text),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoCallUI() {
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            children: [
+              _localUserJoined
+                  ? AgoraVideoView(
+                controller: VideoViewController(
+                  rtcEngine: _engine!,
+                  canvas: const VideoCanvas(uid: 0),
+                ),
+              )
+                  : Center(child: Text('Joining video call...')),
+
+              if (_remoteUid != null)
+                Align(
+                  alignment: Alignment.topRight,
+                  child: Container(
+                    width: 120,
+                    height: 160,
+                    child: AgoraVideoView(
+                      controller: VideoViewController.remote(
+                        rtcEngine: _engine!,
+                        canvas: VideoCanvas(uid: _remoteUid),
+                        connection: const RtcConnection(channelId: channelName),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(
+                onPressed: _localUserJoined ? _leaveVideoCall : _joinVideoCall,
+                child: Text(_localUserJoined ? 'Leave Call' : 'Join Call'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -175,100 +353,8 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
               },
             ),
           ),
+          _buildVideoCallUI(), // Video Call UI
           _buildMessageInput(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMessageBubble(DocumentSnapshot message) {
-    bool isImage = message['type'] == 'image';
-    bool isAudio = message['type'] == 'audio';
-    bool isVideo = message['type'] == 'video';
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: EdgeInsets.symmetric(vertical: 5),
-        padding: EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: Colors.blue[100],
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: isImage
-            ? Image.network(message['content'])
-            : isAudio
-            ? IconButton(
-          icon: Icon(
-            _currentPlayingAudioUrl == message['content'] && isPlaying
-                ? Icons.stop_circle
-                : Icons.play_circle_outline,
-          ),
-          onPressed: () {
-            _playAudio(message['content']);
-          },
-        )
-            : isVideo
-            ? _buildVideoPlayer(message['content'])
-            : Text(message['content']),
-      ),
-    );
-  }
-
-  Widget _buildVideoPlayer(String videoUrl) {
-    return GestureDetector(
-      onTap: () {
-        _playVideo(videoUrl);
-      },
-      child: AspectRatio(
-        aspectRatio: _videoPlayerController?.value.aspectRatio ?? 16 / 9,
-        child: _currentPlayingVideoUrl == videoUrl && _videoPlayerController != null
-            ? VideoPlayer(_videoPlayerController!)
-            : Center(
-          child: Icon(Icons.play_circle_outline),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessageInput() {
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(Icons.attach_file),
-            onPressed: _pickAttachment,
-          ),
-          IconButton(
-            icon: Icon(Icons.video_library),
-            onPressed: _pickVideo,
-          ),
-          IconButton(
-            icon: isRecording ? Icon(Icons.stop) : Icon(Icons.mic),
-            onPressed: () {
-              if (isRecording) {
-                _stopRecording();
-              } else {
-                _startRecording();
-              }
-            },
-          ),
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: 'Type a message...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-          ),
-          IconButton(
-            icon: Icon(Icons.send),
-            onPressed: () => _sendMessage('text', _messageController.text),
-          ),
         ],
       ),
     );
