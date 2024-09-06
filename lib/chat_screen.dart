@@ -22,6 +22,9 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   FlutterSoundPlayer? _player;
   bool isRecording = false;
   bool isPlaying = false;
+  String? _currentPlayingAudioUrl; // Track currently playing audio
+  String? _currentPlayingVideoUrl; // Track currently playing video
+  VideoPlayerController? _videoPlayerController;
   late CollectionReference messagesCollection;
 
   @override
@@ -38,6 +41,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   void dispose() {
     _recorder!.closeRecorder();
     _player!.closePlayer();
+    _videoPlayerController?.dispose(); // Dispose video controller
     super.dispose();
   }
 
@@ -103,15 +107,41 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   }
 
   Future<void> _playAudio(String url) async {
-    if (isPlaying) {
+    if (_currentPlayingAudioUrl == url && isPlaying) {
       await _player!.stopPlayer();
       setState(() {
         isPlaying = false;
+        _currentPlayingAudioUrl = null;
       });
     } else {
+      if (isPlaying) {
+        await _player!.stopPlayer();
+      }
       await _player!.startPlayer(fromURI: url, codec: Codec.aacADTS);
       setState(() {
         isPlaying = true;
+        _currentPlayingAudioUrl = url;
+      });
+    }
+  }
+
+  Future<void> _playVideo(String videoUrl) async {
+    if (_videoPlayerController != null) {
+      await _videoPlayerController!.pause();
+    }
+
+    if (_currentPlayingVideoUrl == videoUrl && _videoPlayerController!.value.isPlaying) {
+      _videoPlayerController!.pause();
+      setState(() {
+        _currentPlayingVideoUrl = null;
+      });
+    } else {
+      _videoPlayerController = VideoPlayerController.network(videoUrl);
+      await _videoPlayerController!.initialize();
+      _videoPlayerController!.play();
+
+      setState(() {
+        _currentPlayingVideoUrl = videoUrl;
       });
     }
   }
@@ -169,7 +199,11 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             ? Image.network(message['content'])
             : isAudio
             ? IconButton(
-          icon: Icon(isPlaying ? Icons.stop_circle : Icons.play_circle_outline),
+          icon: Icon(
+            _currentPlayingAudioUrl == message['content'] && isPlaying
+                ? Icons.stop_circle
+                : Icons.play_circle_outline,
+          ),
           onPressed: () {
             _playAudio(message['content']);
           },
@@ -182,20 +216,17 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   }
 
   Widget _buildVideoPlayer(String videoUrl) {
-    VideoPlayerController _videoPlayerController = VideoPlayerController.network(videoUrl);
-    _videoPlayerController.initialize();
-
     return GestureDetector(
       onTap: () {
-        setState(() {
-          _videoPlayerController.value.isPlaying
-              ? _videoPlayerController.pause()
-              : _videoPlayerController.play();
-        });
+        _playVideo(videoUrl);
       },
       child: AspectRatio(
-        aspectRatio: _videoPlayerController.value.aspectRatio,
-        child: VideoPlayer(_videoPlayerController),
+        aspectRatio: _videoPlayerController?.value.aspectRatio ?? 16 / 9,
+        child: _currentPlayingVideoUrl == videoUrl && _videoPlayerController != null
+            ? VideoPlayer(_videoPlayerController!)
+            : Center(
+          child: Icon(Icons.play_circle_outline),
+        ),
       ),
     );
   }
