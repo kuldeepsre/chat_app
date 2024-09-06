@@ -1,11 +1,11 @@
 import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
+
 class ChatScreen extends StatefulWidget {
   final String chatId; // For one-to-one chats
   final bool isGroupChat; // Whether it's a group chat or not
@@ -33,9 +33,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _initializeChat() {
     if (widget.isGroupChat) {
-      messagesCollection = FirebaseFirestore.instance.collection('groups/${widget.groupId}/messages');
+      // Ensure groupId is not empty
+      if (widget.groupId.isNotEmpty) {
+        messagesCollection = FirebaseFirestore.instance.collection('groups/${widget.groupId}/messages');
+      } else {
+        throw Exception('Group ID must not be empty for group chat');
+      }
     } else {
-      messagesCollection = FirebaseFirestore.instance.collection('chats/${widget.chatId}/messages');
+      // Ensure chatId is not empty
+      if (widget.chatId.isNotEmpty) {
+        messagesCollection = FirebaseFirestore.instance.collection('chats/${widget.chatId}/messages');
+      } else {
+        throw Exception('Chat ID must not be empty for one-to-one chat');
+      }
     }
   }
 
@@ -47,12 +57,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Send text message to Firestore
   void _sendMessage(String type, String content) {
-    messagesCollection!.add({
-      'type': type, // text, image, audio
-      'content': content,
-      'createdAt': Timestamp.now(),
-    });
-    _messageController.clear(); // Clear input field after sending
+    if (content.isNotEmpty) {
+      messagesCollection!.add({
+        'type': type, // text, image, audio
+        'content': content,
+        'createdAt': Timestamp.now(),
+      });
+      _messageController.clear(); // Clear input field after sending
+    }
   }
 
   // Pick and send an image attachment
