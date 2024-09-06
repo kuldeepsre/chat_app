@@ -30,6 +30,10 @@ dependencies:
   image_picker: ^0.8.5+3
   flutter_sound: ^9.2.13  # For voice recording
   permission_handler: ^10.2.0 # Might be needed for microphone permissions
+  firebase_core: ^2.24.2
+  cloud_firestore: ^4.14.0
+  firebase_storage: ^11.6.0
+  file_picker: ^7.0.2
 dev_dependencies:
   flutter_test:
     sdk: flutter
