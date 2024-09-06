@@ -6,47 +6,27 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-class ChatScreen extends StatefulWidget {
-  final String chatId; // For one-to-one chats
-  final bool isGroupChat; // Whether it's a group chat or not
-  final String groupId; // For group chats
+class RoomChatScreen extends StatefulWidget {
+  final String roomId; // Room ID for the chat
 
-  ChatScreen({this.chatId = '', this.isGroupChat = false, this.groupId = ''});
+  RoomChatScreen({required this.roomId});
 
   @override
-  _ChatScreenState createState() => _ChatScreenState();
+  _RoomChatScreenState createState() => _RoomChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _RoomChatScreenState extends State<RoomChatScreen> {
   TextEditingController _messageController = TextEditingController();
   FlutterSoundRecorder? _recorder;
   bool isRecording = false;
-  CollectionReference? messagesCollection;
+  late CollectionReference messagesCollection;
 
   @override
   void initState() {
     super.initState();
     _recorder = FlutterSoundRecorder();
     _recorder!.openRecorder();
-    _initializeChat();
-  }
-
-  void _initializeChat() {
-    if (widget.isGroupChat) {
-      // Ensure groupId is not empty
-      if (widget.groupId.isNotEmpty) {
-        messagesCollection = FirebaseFirestore.instance.collection('groups/${widget.groupId}/messages');
-      } else {
-        throw Exception('Group ID must not be empty for group chat');
-      }
-    } else {
-      // Ensure chatId is not empty
-      if (widget.chatId.isNotEmpty) {
-        messagesCollection = FirebaseFirestore.instance.collection('chats/${widget.chatId}/messages');
-      } else {
-        throw Exception('Chat ID must not be empty for one-to-one chat');
-      }
-    }
+    messagesCollection = FirebaseFirestore.instance.collection('rooms/${widget.roomId}/messages');
   }
 
   @override
@@ -55,10 +35,9 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  // Send text message to Firestore
   void _sendMessage(String type, String content) {
     if (content.isNotEmpty) {
-      messagesCollection!.add({
+      messagesCollection.add({
         'type': type, // text, image, audio
         'content': content,
         'createdAt': Timestamp.now(),
@@ -67,23 +46,19 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Pick and send an image attachment
   Future<void> _pickAttachment() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
 
     if (pickedFile != null) {
-      // Upload to Firebase Storage
-      final storageRef = FirebaseStorage.instance.ref().child('chat_attachments/${DateTime.now()}.png');
+      final storageRef = FirebaseStorage.instance.ref().child('room_attachments/${DateTime.now().toString()}.png');
       await storageRef.putFile(File(pickedFile.path));
       String fileUrl = await storageRef.getDownloadURL();
 
-      // Send image message
       _sendMessage('image', fileUrl);
     }
   }
 
-  // Start recording voice message
   Future<void> _startRecording() async {
     if (await Permission.microphone.request().isGranted) {
       setState(() {
@@ -93,7 +68,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  // Stop recording and send voice message
   Future<void> _stopRecording() async {
     String? filePath = await _recorder!.stopRecorder();
     setState(() {
@@ -101,12 +75,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     if (filePath != null) {
-      // Upload audio file to Firebase Storage
-      final storageRef = FirebaseStorage.instance.ref().child('voice_messages/${DateTime.now()}.aac');
+      final storageRef = FirebaseStorage.instance.ref().child('room_voice_messages/${DateTime.now().toString()}.aac');
       await storageRef.putFile(File(filePath));
       String fileUrl = await storageRef.getDownloadURL();
 
-      // Send audio message
       _sendMessage('audio', fileUrl);
     }
   }
@@ -115,13 +87,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: widget.isGroupChat ? Text('Group Chat') : Text('Chat'),
+        title: Text('Room Chat'),
       ),
       body: Column(
         children: [
           Expanded(
             child: StreamBuilder(
-              stream: messagesCollection!.orderBy('createdAt', descending: true).snapshots(),
+              stream: messagesCollection.orderBy('createdAt', descending: true).snapshots(),
               builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator());
@@ -149,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildMessageBubble(DocumentSnapshot message) {
     bool isImage = message['type'] == 'image';
     bool isAudio = message['type'] == 'audio';
+
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
@@ -164,7 +137,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ? IconButton(
           icon: Icon(Icons.play_circle_outline),
           onPressed: () {
-            // Play audio logic (not implemented here)
+            // Add audio playback logic here
           },
         )
             : Text(message['content']),
