@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
-
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 void main() {
   runApp(const MyApp());
 }
-ol.
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -31,95 +33,153 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home:  ChatScreen(),
     );
   }
 }
+ // For voice recording
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
+class ChatScreen extends StatefulWidget {
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  _ChatScreenState createState() => _ChatScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _ChatScreenState extends State<ChatScreen> {
+  FlutterSoundRecorder? _recorder;
+  bool isRecording = false;
 
-  void _incrementCounter() {
+  @override
+  void initState() {
+    super.initState();
+    _recorder = FlutterSoundRecorder();
+    _recorder!.openRecorder();
+  }
+
+  @override
+  void dispose() {
+    _recorder!.closeRecorder();
+    super.dispose();
+  }
+
+  Future<void> _startRecording() async {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      isRecording = true;
     });
+    await _recorder!.startRecorder(toFile: 'audio_message.aac');
+  }
+
+  Future<void> _stopRecording() async {
+    setState(() {
+      isRecording = false;
+    });
+    String? filePath = await _recorder!.stopRecorder();
+    print('Recorded audio: $filePath');
+    // Send the audio message to the server using socket or API
+  }
+
+  Future<void> _pickAttachment() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      print('Picked file: ${pickedFile.path}');
+      // Send the image to the server using socket or API
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+        title: Text('Chat Room'),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.settings),
+            onPressed: () {
+              // Navigate to settings or profile
+            },
+          )
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
+      body: Column(
+        children: [
+          Expanded(child: _buildMessageList()), // Chat List
+          _buildMessageInput(), // Input Box
+        ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+    );
+  }
+
+  Widget _buildMessageList() {
+    return ListView.builder(
+      padding: EdgeInsets.all(10.0),
+      itemCount: 20, // Temporary message count
+      itemBuilder: (context, index) {
+        bool isSentByMe = index % 2 == 0; // Temporary condition
+        return Align(
+          alignment: isSentByMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: _buildMessageBubble(
+            "Message $index",
+            isSentByMe,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMessageBubble(String message, bool isSentByMe) {
+    return Container(
+      margin: EdgeInsets.symmetric(vertical: 5.0),
+      padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+      decoration: BoxDecoration(
+        color: isSentByMe ? Colors.blue[200] : Colors.grey[300],
+        borderRadius: BorderRadius.circular(20.0),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(color: isSentByMe ? Colors.white : Colors.black),
+      ),
+    );
+  }
+
+  Widget _buildMessageInput() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 8.0),
+      color: Colors.grey[200],
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(Icons.attach_file),
+            onPressed: () async {
+              await _pickAttachment(); // Pick and send attachment
+            },
+          ),
+          IconButton(
+            icon: isRecording ? Icon(Icons.stop) : Icon(Icons.mic),
+            color: isRecording ? Colors.red : Colors.black,
+            onPressed: () async {
+              if (isRecording) {
+                await _stopRecording(); // Stop recording
+              } else {
+                await _startRecording(); // Start recording
+              }
+            },
+          ),
+          const Expanded(
+            child: TextField(
+              decoration: InputDecoration.collapsed(
+                hintText: "Type a message",
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.send),
+            onPressed: () {
+              // Send text message through socket
+            },
+          ),
+        ],
+      ),
     );
   }
 }
+
