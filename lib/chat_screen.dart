@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:video_player/video_player.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class RoomChatScreen extends StatefulWidget {
-  final String roomId; // Room ID for the chat
+  final String roomId;
 
   RoomChatScreen({required this.roomId});
 
@@ -18,31 +19,49 @@ class RoomChatScreen extends StatefulWidget {
 class _RoomChatScreenState extends State<RoomChatScreen> {
   TextEditingController _messageController = TextEditingController();
   FlutterSoundRecorder? _recorder;
+  FlutterSoundPlayer? _player;
   bool isRecording = false;
+  bool isPlaying = false;
   late CollectionReference messagesCollection;
 
   @override
   void initState() {
     super.initState();
     _recorder = FlutterSoundRecorder();
+    _player = FlutterSoundPlayer();
     _recorder!.openRecorder();
+    _player!.openPlayer();
     messagesCollection = FirebaseFirestore.instance.collection('rooms/${widget.roomId}/messages');
   }
 
   @override
   void dispose() {
     _recorder!.closeRecorder();
+    _player!.closePlayer();
     super.dispose();
   }
 
   void _sendMessage(String type, String content) {
     if (content.isNotEmpty) {
       messagesCollection.add({
-        'type': type, // text, image, audio
+        'type': type, // text, image, audio, video
         'content': content,
         'createdAt': Timestamp.now(),
       });
-      _messageController.clear(); // Clear input field after sending
+      _messageController.clear();
+    }
+  }
+
+  Future<void> _pickVideo() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickVideo(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      final storageRef = FirebaseStorage.instance.ref().child('room_videos/${DateTime.now().toString()}.mp4');
+      await storageRef.putFile(File(pickedFile.path));
+      String videoUrl = await storageRef.getDownloadURL();
+
+      _sendMessage('video', videoUrl);
     }
   }
 
@@ -80,6 +99,20 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
       String fileUrl = await storageRef.getDownloadURL();
 
       _sendMessage('audio', fileUrl);
+    }
+  }
+
+  Future<void> _playAudio(String url) async {
+    if (isPlaying) {
+      await _player!.stopPlayer();
+      setState(() {
+        isPlaying = false;
+      });
+    } else {
+      await _player!.startPlayer(fromURI: url, codec: Codec.aacADTS);
+      setState(() {
+        isPlaying = true;
+      });
     }
   }
 
@@ -121,6 +154,7 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
   Widget _buildMessageBubble(DocumentSnapshot message) {
     bool isImage = message['type'] == 'image';
     bool isAudio = message['type'] == 'audio';
+    bool isVideo = message['type'] == 'video';
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -135,12 +169,33 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
             ? Image.network(message['content'])
             : isAudio
             ? IconButton(
-          icon: Icon(Icons.play_circle_outline),
+          icon: Icon(isPlaying ? Icons.stop_circle : Icons.play_circle_outline),
           onPressed: () {
-            // Add audio playback logic here
+            _playAudio(message['content']);
           },
         )
+            : isVideo
+            ? _buildVideoPlayer(message['content'])
             : Text(message['content']),
+      ),
+    );
+  }
+
+  Widget _buildVideoPlayer(String videoUrl) {
+    VideoPlayerController _videoPlayerController = VideoPlayerController.network(videoUrl);
+    _videoPlayerController.initialize();
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _videoPlayerController.value.isPlaying
+              ? _videoPlayerController.pause()
+              : _videoPlayerController.play();
+        });
+      },
+      child: AspectRatio(
+        aspectRatio: _videoPlayerController.value.aspectRatio,
+        child: VideoPlayer(_videoPlayerController),
       ),
     );
   }
@@ -153,6 +208,10 @@ class _RoomChatScreenState extends State<RoomChatScreen> {
           IconButton(
             icon: Icon(Icons.attach_file),
             onPressed: _pickAttachment,
+          ),
+          IconButton(
+            icon: Icon(Icons.video_library),
+            onPressed: _pickVideo,
           ),
           IconButton(
             icon: isRecording ? Icon(Icons.stop) : Icon(Icons.mic),
